@@ -1,6 +1,10 @@
-﻿using aws_bucket.Roles;
+﻿using Amazon.S3.Model;
+using aws_bucket.Data;
+using aws_bucket.Model;
+using aws_bucket.Roles;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -15,44 +19,77 @@ namespace aws_bucket.Controllers
         private readonly IConfiguration _configuration;
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly UserManager<IdentityUser> _userManager;
-
-        public AuthenticateController(UserManager<IdentityUser> userManager, RoleManager<IdentityRole> roleManager, IConfiguration configuration)
+        private readonly DbContextClass _context;
+        public AuthenticateController(DbContextClass context,UserManager<IdentityUser> userManager, RoleManager<IdentityRole> roleManager, IConfiguration configuration)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _configuration = configuration;
+            _context = context;
         }
 
         [HttpPost]
         [Route("login")]
         public async Task<IActionResult> Login( Login model)
         {
+            
             var user = await _userManager.FindByNameAsync(model.UserName);
-            var d = _userManager.CheckPasswordAsync(user, model.Password);
-            if (user != null && await _userManager.CheckPasswordAsync(user, model.Password))
-            {
-                var userRole = await _userManager.GetRolesAsync(user);
-                var authClaims = new List<Claim> {
+
+           
+                
+            
+            
+                var d = _userManager.CheckPasswordAsync(user, model.Password);
+                if (user != null && await _userManager.CheckPasswordAsync(user, model.Password))
+                {
+                    var userRole = await _userManager.GetRolesAsync(user);
+                    var authClaims = new List<Claim> {
                     new Claim(ClaimTypes.Name, user.UserName),
                     new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
                 };
 
-                foreach (var role in userRole)
-                {
-                    authClaims.Add(new Claim(ClaimTypes.Role, role));
+                    foreach (var role in userRole)
+                    {
+                        authClaims.Add(new Claim(ClaimTypes.Role, role));
+                    }
+
+                    var token = GetToken(authClaims);
+
+                    if (userRole[0] == "User")
+                    {
+                    if (DateTime.Now < _context.UserInfos.ToList().Where(x => x.Login.Equals(user.UserName)).FirstOrDefault().blockedUntil)
+                    {
+                        return Unauthorized();
+                    }
+                    else 
+                    return Ok(new
+                        {
+
+                            Token = new JwtSecurityTokenHandler().WriteToken(token),
+                            expiration = token.ValidTo,
+                            userId = user.UserName,
+
+                            package = _context.UserInfos.ToList().Where(x => x.Login.Equals(user.UserName)).FirstOrDefault().Package,
+                            userRole
+
+                        });
+                    }
+                    else
+                    {
+                        return Ok(new
+                        {
+
+                            Token = new JwtSecurityTokenHandler().WriteToken(token),
+                            expiration = token.ValidTo,
+                            userId = user.UserName,
+                            userRole
+
+                        });
+                    }
                 }
+                return Unauthorized();
+            
 
-                var token = GetToken(authClaims);
-
-                return Ok(new
-                {
-                    Token = new JwtSecurityTokenHandler().WriteToken(token),
-                    expiration = token.ValidTo,
-                    userId = user.Id,
-                    userRole
-                });
-            }
-            return Unauthorized();
         }
 
         [HttpPost]
@@ -73,6 +110,8 @@ namespace aws_bucket.Controllers
             if (!res.Succeeded) { return StatusCode(StatusCodes.Status500InternalServerError, "Creation failed!"); }
             if (await _roleManager.RoleExistsAsync(UserRoles.User))
                 await _userManager.AddToRoleAsync(user, UserRoles.User);
+            _context.Add(new UserInfo() { Login = user.UserName, Package = "BASE" });
+            _context.SaveChanges();
             return Ok("User added!");
         }
 
@@ -123,5 +162,41 @@ namespace aws_bucket.Controllers
 
             return token;
         }
-    }
+
+        [HttpPost]
+        [Route("Block")]
+
+        public async Task<IActionResult> Block([FromForm] string Login, [FromForm]  int typeblock)
+        {
+            if(typeblock==1)
+            {
+                _context.UserInfos.ToList().Where(x => x.Login.Equals(Login)).FirstOrDefault().blockedUntil= DateTime.Now.AddDays(1);
+            }
+            else if(typeblock==2) 
+            {
+                _context.UserInfos.ToList().Where(x => x.Login.Equals(Login)).FirstOrDefault().blockedUntil = DateTime.Now.AddDays(7);
+
+            }
+            else if (typeblock == 3)
+            {
+                _context.UserInfos.ToList().Where(x => x.Login.Equals(Login)).FirstOrDefault().blockedUntil = DateTime.Now.AddMonths(1);
+
+            }
+            else if (typeblock == 4)
+            {
+                _context.UserInfos.ToList().Where(x => x.Login.Equals(Login)).FirstOrDefault().blockedUntil = DateTime.Now.AddYears(1);
+
+            }
+            else if (typeblock == 5)
+            {
+                _context.UserInfos.ToList().Where(x => x.Login.Equals(Login)).FirstOrDefault().blockedUntil = DateTime.MaxValue;
+
+            }
+            _context.SaveChanges();
+            return Ok("User blocked!");
+
+        }
+
+
+        }
 }

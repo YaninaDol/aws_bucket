@@ -5,6 +5,7 @@
         public int Id { get; set; } 
         public string? Login { get; set; }
         public string? Package { get; set; }
+        public DateTime? blockedUntil { get; set; }
 
     }
 }
